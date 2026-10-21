@@ -4,6 +4,8 @@ An interactive, photorealistic **Augmented Reality Hookah Experience** right ins
 
 Control the hookah pipe with your real hands, bring it to your mouth to take a sip, and exhale realistic, billowing, atmospheric smoke that curls naturally around your face!
 
+🚀 **Live Demo:** [hookah-jade.vercel.app](https://hookah-jade.vercel.app) — allow camera access when prompted.
+
 ---
 
 ## ✨ Features
