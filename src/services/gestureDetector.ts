@@ -7,7 +7,8 @@ export class GestureDetector {
     landmarksList: Array<Array<{ x: number; y: number; z?: number }>>,
     canvasWidth: number,
     canvasHeight: number,
-    isMirrored: boolean = true
+    isMirrored: boolean = true,
+    offset: Point2D = { x: 0, y: 0 }
   ): PinchState | null {
     if (!landmarksList || landmarksList.length === 0) {
       return null;
@@ -34,8 +35,8 @@ export class GestureDetector {
 
       // Convert to visual screen space
       const toScreen = (pt: { x: number; y: number }): Point2D => ({
-        x: (isMirrored ? 1 - pt.x : pt.x) * canvasWidth,
-        y: pt.y * canvasHeight
+        x: (isMirrored ? 1 - pt.x : pt.x) * canvasWidth + offset.x,
+        y: pt.y * canvasHeight + offset.y
       });
 
       const thumbTip = toScreen(thumbRaw);

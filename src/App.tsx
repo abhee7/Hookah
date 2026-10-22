@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ARCanvas } from './components/ARCanvas';
 import { DebugHUD } from './components/DebugHUD';
+import { SettingsPanel } from './components/SettingsPanel';
+import { loadSettings, saveSettings, type ARSettings } from './types/settings';
 import type { AppState, MouthState, PinchState } from './types/hookah';
 
 export function App() {
@@ -9,6 +11,13 @@ export function App() {
   const [pinchState, setPinchState] = useState<PinchState | null>(null);
   const [mouthState, setMouthState] = useState<MouthState | null>(null);
   const [manualSmokeTrigger, setManualSmokeTrigger] = useState<boolean>(false);
+  const [settings, setSettings] = useState<ARSettings>(loadSettings);
+  const [coalHeat, setCoalHeat] = useState<number>(0.35);
+  const [screenshotRequest, setScreenshotRequest] = useState<number>(0);
+
+  useEffect(() => {
+    saveSettings(settings);
+  }, [settings]);
 
   const handleMetricsUpdate = (pinch: PinchState | null, mouth: MouthState | null) => {
     setPinchState(pinch);
@@ -25,10 +34,19 @@ export function App() {
         pinchState={pinchState}
         mouthState={mouthState}
       />
+      <SettingsPanel
+        settings={settings}
+        onChange={setSettings}
+        coalHeat={coalHeat}
+        onScreenshot={() => setScreenshotRequest((n) => n + 1)}
+      />
       <ARCanvas
         showLandmarks={showLandmarks}
+        settings={settings}
+        screenshotRequest={screenshotRequest}
         onStateChange={setAppState}
         onMetricsUpdate={handleMetricsUpdate}
+        onCoalHeatChange={setCoalHeat}
         manualSmokeTrigger={manualSmokeTrigger}
         onManualSmokeTriggered={() => setManualSmokeTrigger(false)}
       />

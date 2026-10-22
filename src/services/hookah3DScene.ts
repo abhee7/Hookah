@@ -18,6 +18,10 @@ export class Hookah3DScene {
 
   // Animated parts
   private coalEmbersMesh: THREE.Mesh;
+  private coalGlow: THREE.PointLight;
+  private coalHeat = 0.35; // 0 (dull red) .. 1 (white-hot), driven by the second hand
+  private readonly coalColdColor = new THREE.Color(0xb02a00);
+  private readonly coalHotColor = new THREE.Color(0xffb02e);
   private waterMesh: THREE.Mesh;
 
   // Smoothed 3D positions to avoid jitter
@@ -79,9 +83,9 @@ export class Hookah3DScene {
     this.scene.add(rimLight);
 
     // Coal ember glow
-    const coalGlow = new THREE.PointLight(0xff5500, 3.5, 4.5);
-    coalGlow.position.set(0, 5.5, 0.2);
-    this.scene.add(coalGlow);
+    this.coalGlow = new THREE.PointLight(0xff5500, 3.5, 4.5);
+    this.coalGlow.position.set(0, 5.5, 0.2);
+    this.scene.add(this.coalGlow);
 
     // ─── Shared Materials ────────────────────────────────────────────────────
 
@@ -428,9 +432,14 @@ export class Hookah3DScene {
     const isSipping = appState === 'SIP_DETECTED' || appState === 'PIPE_AT_MOUTH';
     const isVapour = appState === 'VAPOUR';
 
-    const baseEmissive = isSipping || isVapour ? 3.2 : 1.8;
+    // Heat scales the glow: ~0.55x when cooled down, ~1.35x when freshly fanned
+    const heatScale = 0.4 + this.coalHeat * 0.95;
+    const baseEmissive = (isSipping || isVapour ? 3.2 : 1.8) * heatScale;
     const pulse = baseEmissive + Math.sin(timestampMs * 0.008) * (isSipping ? 1.2 : 0.4);
-    (this.coalEmbersMesh.material as THREE.MeshStandardMaterial).emissiveIntensity = pulse;
+    const coalMat = this.coalEmbersMesh.material as THREE.MeshStandardMaterial;
+    coalMat.emissiveIntensity = pulse;
+    coalMat.emissive.copy(this.coalColdColor).lerp(this.coalHotColor, this.coalHeat);
+    this.coalGlow.intensity = 3.5 * heatScale;
 
     // Subtle base sphere shimmer when sipping
     if (isSipping) {
@@ -442,6 +451,20 @@ export class Hookah3DScene {
 
     // ── 5. Render ─────────────────────────────────────────────────────────────
     this.renderer.render(this.scene, this.camera);
+  }
+
+  setCoalHeat(heat: number) {
+    this.coalHeat = Math.max(0, Math.min(1, heat));
+  }
+
+  /** Where the charcoal currently appears on screen (px), for hand interaction and sparks. */
+  getCoalScreenPosition(): Point2D {
+    const v = new THREE.Vector3(0, 6.52, 0).add(this.hookahGroup.position);
+    v.project(this.camera);
+    return {
+      x: ((v.x + 1) / 2) * this.canvasWidth,
+      y: ((1 - v.y) / 2) * this.canvasHeight
+    };
   }
 
   destroy() {

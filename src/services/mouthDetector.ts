@@ -8,7 +8,8 @@ export class MouthDetector {
     faceLandmarksList: Array<Array<{ x: number; y: number; z?: number }>>,
     canvasWidth: number,
     canvasHeight: number,
-    isMirrored: boolean = true
+    isMirrored: boolean = true,
+    offset: Point2D = { x: 0, y: 0 }
   ): MouthState | null {
     if (!faceLandmarksList || faceLandmarksList.length === 0) {
       return null;
@@ -50,8 +51,8 @@ export class MouthDetector {
 
     // Convert to screen space (with visual mirroring)
     const center: Point2D = {
-      x: (isMirrored ? 1 - centerNorm.x : centerNorm.x) * canvasWidth,
-      y: centerNorm.y * canvasHeight
+      x: (isMirrored ? 1 - centerNorm.x : centerNorm.x) * canvasWidth + offset.x,
+      y: centerNorm.y * canvasHeight + offset.y
     };
 
     const width = widthNorm * canvasWidth;

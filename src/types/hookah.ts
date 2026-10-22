@@ -53,4 +53,19 @@ export interface Particle {
   life: number;
   rotation: number;
   rotSpeed: number;
+  expansionRate?: number;
+  lateralBias?: number;
+  kind?: 'puff' | 'ring';
+}
+
+export interface FaceAnchors {
+  center: Point2D; // between the eyes
+  roll: number; // head tilt in radians (screen space)
+  width: number; // cheek-to-cheek width in px
+  eyeLeft: Point2D; // screen-left eye
+  eyeRight: Point2D; // screen-right eye
+  forehead: Point2D;
+  chin: Point2D;
+  noseLeft: Point2D;
+  noseRight: Point2D;
 }
