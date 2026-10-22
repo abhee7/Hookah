@@ -16,6 +16,17 @@ Control the hookah pipe with your real hands, bring it to your mouth to take a s
 - 💨 **Atmospheric Volumetric Smoke**: Multi-tiered particle system that produces translucent billowing hookah clouds with instant zero-latency response, curling and scattering around your face, cheeks, and shoulders.
 - ⚡ **Zero Backend / 100% Client-Side**: Runs entirely in the client's browser with WebGL hardware acceleration and webcam feed privacy.
 
+### 🆕 More Ways to Play
+
+Open the **Options** panel (top right) to customise the experience. Your choices are remembered in the browser.
+
+- 💨 **Smoke Options**: Choose the smoke style (**Clouds**, **Rings** or **Both**), one of six colours (white, mint, berry, blue, gold, violet), the density (0.5×–2×), and a slow-motion mode. You can exhale from the **mouth**, the **nose**, or **both**.
+- 😎 **Face-Anchored Effects**: Sunglasses, a crown, a party hat or a halo that stick to your face and tilt with your head, built on facial landmark tracking.
+- 🔥 **Second-Hand Charcoal Control**: Hold the hose with one hand and use your **other hand** on the coal. Hover an **open palm** over it to fan it (brighter glow and sparks), or **pinch** near it to add a fresh coal. A hotter coal makes thicker smoke, and the heat slowly cools down again.
+- 🔊 **Procedural Sound**: Water bubbling while you sip, an exhale whoosh, and coal crackle that gets louder as the coal heats up. Generated with the Web Audio API (no audio files). Use the speaker button to mute. Browsers only start audio after your first click or tap.
+- 📸 **Screenshot Button**: Saves one PNG of the camera view, the 3D hookah, the smoke and your face effect.
+- 🎯 **Accurate Alignment**: Face and hand positions are mapped through the same crop as the camera feed, so effects line up on any screen shape.
+
 ---
 
 ## 🎮 How to Interact
@@ -26,6 +37,8 @@ Control the hookah pipe with your real hands, bring it to your mouth to take a s
 | **2. Bring to Mouth** | Move your hand towards your face | Move the pipe within proximity of your mouth |
 | **3. Take a Sip** | Inhale from the mouthpiece | Open mouth slightly while pipe is at lips (LED/water bubbles activate) |
 | **4. Exhale Vapour** | Release or move pipe away and open mouth | Instant atmospheric smoke plume billows out and curls around you |
+| **5. Fan the Coal** | Use your free hand over the glowing coal | **Open palm** hovering over the coal: hotter glow, sparks, thicker smoke |
+| **6. Fresh Coal** | Use your free hand near the coal | **Pinch** fingers near the coal to add a fresh coal |
 
 ---
 
@@ -36,6 +49,7 @@ Control the hookah pipe with your real hands, bring it to your mouth to take a s
 - **3D Graphics & Rendering**: [Three.js](https://threejs.org/)
 - **Computer Vision & AI**: [@mediapipe/tasks-vision](https://ai.google.dev/edge/mediapipe/solutions/vision) (FaceLandmarker & HandLandmarker)
 - **Particle Dynamics**: Custom Canvas 2D Volumetric Particle Physics Engine
+- **Audio**: Web Audio API (synthesised sound effects)
 
 ---
 
