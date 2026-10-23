@@ -3,6 +3,13 @@ import { FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision';
 export class FaceTrackerService {
   private faceLandmarker: FaceLandmarker | null = null;
   private isInitializing = false;
+  private maxFaces = 1;
+
+  /** Track more than one face (two-person mode). Safe to call before or after initialize(). */
+  setMaxFaces(count: number) {
+    this.maxFaces = count;
+    void this.faceLandmarker?.setOptions({ numFaces: count });
+  }
 
   async initialize(): Promise<void> {
     if (this.faceLandmarker || this.isInitializing) return;
@@ -20,7 +27,7 @@ export class FaceTrackerService {
           delegate: 'GPU'
         },
         runningMode: 'VIDEO',
-        numFaces: 1
+        numFaces: this.maxFaces
       });
       console.log('FaceLandmarker initialized successfully');
     } catch (err) {
@@ -36,7 +43,7 @@ export class FaceTrackerService {
             delegate: 'CPU'
           },
           runningMode: 'VIDEO',
-          numFaces: 1
+          numFaces: this.maxFaces
         });
       } catch (fallbackErr) {
         console.error('FaceLandmarker CPU fallback failed:', fallbackErr);

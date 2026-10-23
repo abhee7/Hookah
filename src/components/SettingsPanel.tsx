@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Camera, Flame, Settings, Volume2, VolumeX, X } from 'lucide-react';
+import { Camera, Flame, Settings, SwitchCamera, Video, Volume2, VolumeX, X } from 'lucide-react';
 import type { ARSettings, ExhaleSource, FaceEffect, SmokeColor, SmokeStyle } from '../types/settings';
 
 interface SettingsPanelProps {
@@ -7,6 +7,17 @@ interface SettingsPanelProps {
   onChange: (settings: ARSettings) => void;
   coalHeat: number;
   onScreenshot: () => void;
+  recording: boolean;
+  recordingSeconds: number;
+  onToggleRecording: () => void;
+  canSwitchCamera: boolean;
+  onSwitchCamera: () => void;
+}
+
+function formatClock(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
 const SMOKE_STYLES: Array<{ value: SmokeStyle; label: string }> = [
@@ -68,7 +79,17 @@ function chip(active: boolean): React.CSSProperties {
   };
 }
 
-export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange, coalHeat, onScreenshot }) => {
+export const SettingsPanel: React.FC<SettingsPanelProps> = ({
+  settings,
+  onChange,
+  coalHeat,
+  onScreenshot,
+  recording,
+  recordingSeconds,
+  onToggleRecording,
+  canSwitchCamera,
+  onSwitchCamera
+}) => {
   const [open, setOpen] = useState<boolean>(() => window.innerWidth >= 900);
   const update = (patch: Partial<ARSettings>) => onChange({ ...settings, ...patch });
   const heatPct = Math.round(coalHeat * 100);
@@ -89,7 +110,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         pointerEvents: 'none'
       }}
     >
-      <div style={{ display: 'flex', gap: 8, pointerEvents: 'auto' }}>
+      <div style={{ display: 'flex', gap: 8, pointerEvents: 'auto', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
         <div
           style={{
             ...card,
@@ -115,6 +136,37 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         >
           <Camera size={15} />
         </button>
+        <button
+          onClick={onToggleRecording}
+          title={recording ? 'Stop recording' : 'Record a video clip'}
+          aria-label={recording ? 'Stop recording' : 'Record a video clip'}
+          style={{
+            ...card,
+            borderRadius: 16,
+            padding: '6px 10px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            cursor: 'pointer',
+            color: recording ? '#ff5252' : '#e0e0e0',
+            borderColor: recording ? '#ff5252' : 'rgba(255, 255, 255, 0.12)',
+            fontSize: '0.75rem',
+            fontWeight: 700
+          }}
+        >
+          <Video size={15} />
+          {recording && <span>● {formatClock(recordingSeconds)}</span>}
+        </button>
+        {canSwitchCamera && (
+          <button
+            onClick={onSwitchCamera}
+            title="Switch front / back camera"
+            aria-label="Switch front or back camera"
+            style={{ ...card, borderRadius: 16, padding: '6px 10px', display: 'flex', alignItems: 'center', color: '#e0e0e0', cursor: 'pointer' }}
+          >
+            <SwitchCamera size={15} />
+          </button>
+        )}
         <button
           onClick={() => update({ sound: !settings.sound })}
           title={settings.sound ? 'Mute sound' : 'Turn sound on'}
@@ -212,6 +264,31 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
               </button>
             ))}
           </div>
+
+          <div style={sectionTitle}>Players</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button style={chip(!settings.twoPlayer)} onClick={() => update({ twoPlayer: false })}>
+              1 player
+            </button>
+            <button style={chip(settings.twoPlayer)} onClick={() => update({ twoPlayer: true })}>
+              👥 2 players
+            </button>
+          </div>
+          {settings.twoPlayer && (
+            <p style={{ margin: '6px 0 0', color: '#9e9e9e', fontSize: '0.72rem', lineHeight: 1.45 }}>
+              Both faces get the effect. Pass the hose: the smoke comes from whoever holds it near their mouth.
+            </p>
+          )}
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: '0.78rem', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={settings.lite}
+              onChange={(e) => update({ lite: e.target.checked })}
+              style={{ accentColor: '#e91e63' }}
+            />
+            Lite mode (smoother on phones)
+          </label>
 
           <div style={sectionTitle}>Charcoal · {heatPct}%</div>
           <div style={{ height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.1)', overflow: 'hidden' }}>

@@ -12,6 +12,7 @@ export interface SmokeOptions {
   color: SmokeColor;
   density: number;
   slowMotion: boolean;
+  lite?: boolean; // fewer particles for phones
 }
 
 // Four gradient stops (core -> edge) per colour, as "r, g, b"
@@ -58,8 +59,9 @@ export class VapourParticleSystem {
     const emitRing = this.ringTimer >= RING_INTERVAL_FRAMES && (style === 'rings' || style === 'mix');
     if (emitRing) this.ringTimer = 0;
 
-    // Denser smoke emits every frame, normal density every other frame
-    const emitPuff = (style === 'classic' || style === 'mix') && (density >= 1.5 || this.frameCount % 2 === 0);
+    // Denser smoke emits every frame, normal density every other frame (lite: always every other)
+    const everyFrame = density >= 1.5 && !this.options.lite;
+    const emitPuff = (style === 'classic' || style === 'mix') && (everyFrame || this.frameCount % 2 === 0);
 
     for (const src of sources) {
       const scale = baseScale * (src.scale ?? 1);
@@ -152,7 +154,8 @@ export class VapourParticleSystem {
     lateralBias: number;
     kind?: 'puff' | 'ring';
   }) {
-    if (this.particles.length >= this.maxParticles) {
+    const cap = this.options.lite ? 110 : this.maxParticles;
+    if (this.particles.length >= cap) {
       this.particles.shift();
     }
 

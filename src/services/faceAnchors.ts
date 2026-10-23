@@ -4,12 +4,42 @@ type Landmark = { x: number; y: number; z?: number };
 
 /**
  * Extracts a handful of stable anchor points (eyes, forehead, nostrils, head tilt)
- * from the MediaPipe face mesh so effects can be attached to the face.
+ * from the MediaPipe face mesh so effects can be attached to each detected face.
  */
 export class FaceAnchorDetector {
-  private previous: FaceAnchors | null = null;
+  // Smoothing history per face slot, so every person's effect is filtered separately
+  private previous: Array<FaceAnchors | null> = [];
   private smoothing = 0.55; // 1 = no smoothing, lower = smoother but laggier
 
+  /** One entry per detected face. */
+  detectAll(
+    faceLandmarksList: Landmark[][],
+    canvasWidth: number,
+    canvasHeight: number,
+    isMirrored: boolean = true,
+    offset: Point2D = { x: 0, y: 0 }
+  ): FaceAnchors[] {
+    const faces = faceLandmarksList || [];
+    const results: FaceAnchors[] = [];
+    const nextPrevious: Array<FaceAnchors | null> = [];
+
+    faces.forEach((lm, i) => {
+      const next = this.computeAnchors(lm, canvasWidth, canvasHeight, isMirrored, offset);
+      if (!next) {
+        nextPrevious[i] = null;
+        return;
+      }
+      const prev = this.previous[i];
+      const smoothed = prev ? this.blend(prev, next) : next;
+      nextPrevious[i] = smoothed;
+      results.push(smoothed);
+    });
+
+    this.previous = nextPrevious;
+    return results;
+  }
+
+  /** Anchors of the first detected face (single-player use). */
   detect(
     faceLandmarksList: Landmark[][],
     canvasWidth: number,
@@ -17,11 +47,17 @@ export class FaceAnchorDetector {
     isMirrored: boolean = true,
     offset: Point2D = { x: 0, y: 0 }
   ): FaceAnchors | null {
-    const lm = faceLandmarksList?.[0];
-    if (!lm || lm.length < 468) {
-      this.previous = null;
-      return null;
-    }
+    return this.detectAll(faceLandmarksList, canvasWidth, canvasHeight, isMirrored, offset)[0] ?? null;
+  }
+
+  private computeAnchors(
+    lm: Landmark[] | undefined,
+    canvasWidth: number,
+    canvasHeight: number,
+    isMirrored: boolean,
+    offset: Point2D
+  ): FaceAnchors | null {
+    if (!lm || lm.length < 468) return null;
 
     const toScreen = (i: number): Point2D => ({
       x: (isMirrored ? 1 - lm[i].x : lm[i].x) * canvasWidth + offset.x,
@@ -36,7 +72,7 @@ export class FaceAnchorDetector {
     const cheekA = toScreen(234);
     const cheekB = toScreen(454);
 
-    const next: FaceAnchors = {
+    return {
       center: mid(eyeLeft, eyeRight),
       roll: Math.atan2(eyeRight.y - eyeLeft.y, eyeRight.x - eyeLeft.x),
       width: Math.hypot(cheekA.x - cheekB.x, cheekA.y - cheekB.y),
@@ -47,11 +83,6 @@ export class FaceAnchorDetector {
       noseLeft: toScreen(98),
       noseRight: toScreen(327)
     };
-
-    const prev = this.previous;
-    const result = prev ? this.blend(prev, next) : next;
-    this.previous = result;
-    return result;
   }
 
   private blend(a: FaceAnchors, b: FaceAnchors): FaceAnchors {

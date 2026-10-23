@@ -8,7 +8,9 @@ export class GestureDetector {
     canvasWidth: number,
     canvasHeight: number,
     isMirrored: boolean = true,
-    offset: Point2D = { x: 0, y: 0 }
+    offset: Point2D = { x: 0, y: 0 },
+    // With several people in frame, prefer the grabbing hand closest to this point (the hose)
+    preferNear: Point2D | null = null
   ): PinchState | null {
     if (!landmarksList || landmarksList.length === 0) {
       return null;
@@ -80,8 +82,12 @@ export class GestureDetector {
 
       const finalGrabCenter = isFist ? fistCenter : pinchCenter;
 
-      if (isGrabbing && pinchDistNorm < minDistance) {
-        minDistance = pinchDistNorm;
+      const score = preferNear
+        ? Math.hypot(finalGrabCenter.x - preferNear.x, finalGrabCenter.y - preferNear.y)
+        : pinchDistNorm;
+
+      if (isGrabbing && score < minDistance) {
+        minDistance = score;
         closestResult = {
           isPinching: isPinch,
           isGrabbing: true,

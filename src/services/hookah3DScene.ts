@@ -32,6 +32,10 @@ export class Hookah3DScene {
   private canvasWidth = 1280;
   private canvasHeight = 720;
 
+  private keyLight: THREE.DirectionalLight;
+  private layoutScale = 1; // shrinks the hookah on tall/narrow (portrait) screens
+  private lite = false;
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvasWidth = canvas.width || window.innerWidth;
     this.canvasHeight = canvas.height || window.innerHeight;
@@ -66,11 +70,11 @@ export class Hookah3DScene {
     this.scene.add(ambient);
 
     // Key light (upper right, warm)
-    const keyLight = new THREE.DirectionalLight(0xfff3d0, 2.6);
-    keyLight.position.set(6, 14, 10);
-    keyLight.castShadow = true;
-    keyLight.shadow.mapSize.set(1024, 1024);
-    this.scene.add(keyLight);
+    this.keyLight = new THREE.DirectionalLight(0xfff3d0, 2.6);
+    this.keyLight.position.set(6, 14, 10);
+    this.keyLight.castShadow = true;
+    this.keyLight.shadow.mapSize.set(1024, 1024);
+    this.scene.add(this.keyLight);
 
     // Cool fill light (left)
     const fillLight = new THREE.DirectionalLight(0xb0d8ff, 0.7);
@@ -260,6 +264,24 @@ export class Hookah3DScene {
     this.mouthpieceGroup = new THREE.Group();
     this.buildMouthpiece(goldMat, brassMat);
     this.scene.add(this.mouthpieceGroup);
+
+    this.updateLayoutScale();
+  }
+
+  private updateLayoutScale() {
+    const aspect = this.canvasWidth / this.canvasHeight;
+    // Landscape keeps full size; portrait phones shrink it so it fits the narrow width
+    this.layoutScale = aspect >= 1 ? 1 : Math.max(0.6, Math.min(1, aspect * 1.5));
+    this.hookahGroup.scale.setScalar(this.layoutScale);
+  }
+
+  /** Lighter rendering for phones: no shadows, 1x pixel ratio, simpler hose geometry. */
+  setLite(lite: boolean) {
+    if (this.lite === lite) return;
+    this.lite = lite;
+    this.keyLight.castShadow = !lite;
+    this.renderer.setPixelRatio(lite ? 1 : Math.min(window.devicePixelRatio, 2));
+    this.renderer.setSize(this.canvasWidth, this.canvasHeight);
   }
 
   private buildStem(
@@ -374,6 +396,7 @@ export class Hookah3DScene {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    this.updateLayoutScale();
   }
 
   private screenToWorld(screenX: number, screenY: number, targetZ = 0): THREE.Vector3 {
@@ -395,7 +418,7 @@ export class Hookah3DScene {
     // ── 1. Smooth hookah base position ────────────────────────────────────────
     const targetHookahPos = this.screenToWorld(base2DPos.x, base2DPos.y, 0);
     // Offset downward so the sphere sits on the "table"
-    targetHookahPos.y -= 1.22;
+    targetHookahPos.y -= 1.22 * this.layoutScale;
 
     this.smoothedHookahPos.lerp(targetHookahPos, this.posLerp);
     this.hookahGroup.position.copy(this.smoothedHookahPos);
@@ -408,7 +431,9 @@ export class Hookah3DScene {
 
     // ── 3. Rebuild flexible braided hose ─────────────────────────────────────
     // Port position is offset from the hookah base on the stem section 1
-    const hosePort = this.smoothedHookahPos.clone().add(new THREE.Vector3(0.38, 4.1, 0.1));
+    const hosePort = this.smoothedHookahPos
+      .clone()
+      .add(new THREE.Vector3(0.38, 4.1, 0.1).multiplyScalar(this.layoutScale));
     const mouthEnd = this.smoothedPipePos.clone();
 
     // Two gravity control points for realistic rope drape
@@ -423,7 +448,9 @@ export class Hookah3DScene {
       this.hoseMesh.geometry.dispose();
     }
 
-    const tubeGeo = new THREE.TubeGeometry(curve, 48, 0.065, 12, false);
+    const tubeGeo = this.lite
+      ? new THREE.TubeGeometry(curve, 24, 0.065, 8, false)
+      : new THREE.TubeGeometry(curve, 48, 0.065, 12, false);
     this.hoseMesh = new THREE.Mesh(tubeGeo, this.hoseMaterial);
     this.hoseMesh.castShadow = true;
     this.scene.add(this.hoseMesh);
@@ -459,7 +486,7 @@ export class Hookah3DScene {
 
   /** Where the charcoal currently appears on screen (px), for hand interaction and sparks. */
   getCoalScreenPosition(): Point2D {
-    const v = new THREE.Vector3(0, 6.52, 0).add(this.hookahGroup.position);
+    const v = new THREE.Vector3(0, 6.52 * this.layoutScale, 0).add(this.hookahGroup.position);
     v.project(this.camera);
     return {
       x: ((v.x + 1) / 2) * this.canvasWidth,

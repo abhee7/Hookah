@@ -1,9 +1,46 @@
-import { useEffect, useState } from 'react';
-import { ARCanvas } from './components/ARCanvas';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import { DebugHUD } from './components/DebugHUD';
 import { SettingsPanel } from './components/SettingsPanel';
-import { loadSettings, saveSettings, type ARSettings } from './types/settings';
+import { loadSettings, saveSettings, type ARSettings, type CameraFacing } from './types/settings';
 import type { AppState, MouthState, PinchState } from './types/hookah';
+
+// The AR engine (Three.js + MediaPipe) is the bulk of the app: load it as a separate chunk
+// so the page shell appears immediately.
+const ARCanvas = lazy(() => import('./components/ARCanvas').then((m) => ({ default: m.ARCanvas })));
+
+function EngineLoadingScreen() {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#0a0a0c',
+        color: '#fff',
+        zIndex: 30,
+        fontFamily: 'system-ui, -apple-system, sans-serif'
+      }}
+    >
+      <div
+        style={{
+          width: 48,
+          height: 48,
+          border: '4px solid rgba(255, 255, 255, 0.1)',
+          borderTopColor: '#e91e63',
+          borderRadius: '50%',
+          animation: 'spin 1s linear infinite'
+        }}
+      />
+      <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
+      <h2 style={{ marginTop: 24, fontSize: '1.25rem', fontWeight: 600, letterSpacing: '0.05em' }}>Hookah Bar AR</h2>
+      <p style={{ marginTop: 8, color: '#9e9e9e', fontSize: '0.9rem' }}>Loading AR engine...</p>
+    </div>
+  );
+}
 
 export function App() {
   const [appState, setAppState] = useState<AppState>('IDLE');
@@ -14,10 +51,28 @@ export function App() {
   const [settings, setSettings] = useState<ARSettings>(loadSettings);
   const [coalHeat, setCoalHeat] = useState<number>(0.35);
   const [screenshotRequest, setScreenshotRequest] = useState<number>(0);
+  const [recordRequest, setRecordRequest] = useState<number>(0);
+  const [recording, setRecording] = useState<{ on: boolean; seconds: number }>({ on: false, seconds: 0 });
+  const [facing, setFacing] = useState<CameraFacing>('user');
+  const [cameraCount, setCameraCount] = useState<number>(0);
 
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  // Only offer the front/back switch when the device actually has more than one camera
+  const refreshCameras = useCallback(() => {
+    navigator.mediaDevices
+      ?.enumerateDevices?.()
+      .then((devices) => setCameraCount(devices.filter((d) => d.kind === 'videoinput').length))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    refreshCameras();
+    navigator.mediaDevices?.addEventListener?.('devicechange', refreshCameras);
+    return () => navigator.mediaDevices?.removeEventListener?.('devicechange', refreshCameras);
+  }, [refreshCameras]);
 
   const handleMetricsUpdate = (pinch: PinchState | null, mouth: MouthState | null) => {
     setPinchState(pinch);
@@ -39,17 +94,28 @@ export function App() {
         onChange={setSettings}
         coalHeat={coalHeat}
         onScreenshot={() => setScreenshotRequest((n) => n + 1)}
+        recording={recording.on}
+        recordingSeconds={recording.seconds}
+        onToggleRecording={() => setRecordRequest((n) => n + 1)}
+        canSwitchCamera={cameraCount > 1}
+        onSwitchCamera={() => setFacing((f) => (f === 'user' ? 'environment' : 'user'))}
       />
-      <ARCanvas
-        showLandmarks={showLandmarks}
-        settings={settings}
-        screenshotRequest={screenshotRequest}
-        onStateChange={setAppState}
-        onMetricsUpdate={handleMetricsUpdate}
-        onCoalHeatChange={setCoalHeat}
-        manualSmokeTrigger={manualSmokeTrigger}
-        onManualSmokeTriggered={() => setManualSmokeTrigger(false)}
-      />
+      <Suspense fallback={<EngineLoadingScreen />}>
+        <ARCanvas
+          showLandmarks={showLandmarks}
+          settings={settings}
+          facing={facing}
+          screenshotRequest={screenshotRequest}
+          recordRequest={recordRequest}
+          onRecordingChange={(on, seconds) => setRecording({ on, seconds })}
+          onCameraStarted={refreshCameras}
+          onStateChange={setAppState}
+          onMetricsUpdate={handleMetricsUpdate}
+          onCoalHeatChange={setCoalHeat}
+          manualSmokeTrigger={manualSmokeTrigger}
+          onManualSmokeTriggered={() => setManualSmokeTrigger(false)}
+        />
+      </Suspense>
 
       {/* Creator Attribution Badge */}
       <a
@@ -111,9 +177,11 @@ export function App() {
           <span style={{ fontWeight: 600, fontSize: '0.75rem' }}>@abheepvtt___</span>
         </div>
       </a>
+
+      {/* Privacy-friendly visitor counts (no cookies). Only runs on the deployed site. */}
+      {import.meta.env.PROD && <Analytics />}
     </div>
   );
 }
 
 export default App;
-

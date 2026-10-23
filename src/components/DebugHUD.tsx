@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type { AppState, MouthState, PinchState } from '../types/hookah';
 import { Eye, EyeOff, Wind } from 'lucide-react';
 
@@ -40,6 +40,14 @@ export const DebugHUD: React.FC<DebugHUDProps> = ({
 
   const isPinching = pinchState?.isPinching || false;
   const isMouthOpen = mouthState?.isOpen || false;
+
+  // Narrow screens (phones): hide the metric chips and button labels so the bar fits
+  const [compact, setCompact] = useState<boolean>(() => window.innerWidth < 700);
+  useEffect(() => {
+    const onResize = () => setCompact(window.innerWidth < 700);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   return (
     <div
@@ -86,9 +94,11 @@ export const DebugHUD: React.FC<DebugHUDProps> = ({
               boxShadow: `0 0 10px ${getStateColor(appState)}`
             }}
           />
-          <span style={{ color: '#fff', fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.04em' }}>
-            HOOKAH BAR AR
-          </span>
+          {!compact && (
+            <span style={{ color: '#fff', fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.04em' }}>
+              HOOKAH BAR AR
+            </span>
+          )}
           <span
             style={{
               color: getStateColor(appState),
@@ -115,6 +125,8 @@ export const DebugHUD: React.FC<DebugHUDProps> = ({
           pointerEvents: 'auto'
         }}
       >
+        {!compact && (
+        <>
         {/* Pinch metric indicator */}
         <div
           style={{
@@ -153,6 +165,9 @@ export const DebugHUD: React.FC<DebugHUDProps> = ({
           <span>{isMouthOpen ? 'OPEN' : 'CLOSED'}</span>
         </div>
 
+        </>
+        )}
+
         {/* Landmark Toggle */}
         <button
           onClick={onToggleLandmarks}
@@ -172,7 +187,7 @@ export const DebugHUD: React.FC<DebugHUDProps> = ({
           }}
         >
           {showLandmarks ? <Eye size={14} /> : <EyeOff size={14} />}
-          <span>{showLandmarks ? 'Landmarks ON' : 'Landmarks OFF'}</span>
+          {!compact && <span>{showLandmarks ? 'Landmarks ON' : 'Landmarks OFF'}</span>}
         </button>
 
         {/* Manual Vapour Smoke Trigger */}
@@ -194,7 +209,7 @@ export const DebugHUD: React.FC<DebugHUDProps> = ({
           }}
         >
           <Wind size={14} />
-          <span>Test Smoke</span>
+          {!compact && <span>Test Smoke</span>}
         </button>
       </div>
     </div>

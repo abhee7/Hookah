@@ -10,17 +10,21 @@ import { Hookah3DScene } from '../services/hookah3DScene';
 import { FaceAnchorDetector } from '../services/faceAnchors';
 import { CoalManager } from '../services/coalInteraction';
 import { EmberSparks, drawCoalZone } from '../services/emberSparks';
-import { drawHookahBase, drawHoseAndMouthpiece, drawLandmarksDebug } from '../utils/drawHookah';
 import { AudioEngine } from '../services/audioEngine';
+import { drawHookahBase, drawHoseAndMouthpiece, drawLandmarksDebug } from '../utils/drawHookah';
 import { drawFaceEffect } from '../utils/drawFaceEffects';
 import { getCoverViewport } from '../utils/videoViewport';
-import type { AppState, MouthState, PinchState } from '../types/hookah';
-import type { ARSettings } from '../types/settings';
+import type { AppState, MouthState, PinchState, Point2D } from '../types/hookah';
+import type { ARSettings, CameraFacing } from '../types/settings';
 
 interface ARCanvasProps {
   showLandmarks: boolean;
   settings: ARSettings;
+  facing: CameraFacing;
   screenshotRequest: number; // increments each time the user presses the screenshot button
+  recordRequest: number; // increments each time the user presses the record button (toggle)
+  onRecordingChange: (recording: boolean, seconds: number) => void;
+  onCameraStarted: () => void;
   onStateChange: (state: AppState) => void;
   onMetricsUpdate: (pinch: PinchState | null, mouth: MouthState | null) => void;
   onCoalHeatChange: (heat: number) => void;
@@ -28,10 +32,50 @@ interface ARCanvasProps {
   onManualSmokeTriggered: () => void;
 }
 
+type HandResults = ReturnType<HandTrackerService['detect']>;
+type FaceResults = ReturnType<FaceTrackerService['detect']>;
+
+interface ActiveRecording {
+  recorder: MediaRecorder;
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  timer: number;
+}
+
+const MAX_RECORDING_SECONDS = 30;
+
+function pickRecordingMime(): string {
+  const candidates = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm'
+  ];
+  return candidates.find((m) => MediaRecorder.isTypeSupported(m)) ?? '';
+}
+
+function nearestTo<T>(items: T[], target: Point2D, position: (item: T) => Point2D): T | null {
+  let best: T | null = null;
+  let bestDist = Infinity;
+  for (const item of items) {
+    const p = position(item);
+    const d = Math.hypot(p.x - target.x, p.y - target.y);
+    if (d < bestDist) {
+      bestDist = d;
+      best = item;
+    }
+  }
+  return best;
+}
+
 export const ARCanvas: React.FC<ARCanvasProps> = ({
   showLandmarks,
   settings,
+  facing,
   screenshotRequest,
+  recordRequest,
+  onRecordingChange,
+  onCameraStarted,
   onStateChange,
   onMetricsUpdate,
   onCoalHeatChange,
@@ -64,11 +108,122 @@ export const ARCanvas: React.FC<ARCanvasProps> = ({
   // The render loop is started once, so it reads live props through refs
   const settingsRef = useRef<ARSettings>(settings);
   const showLandmarksRef = useRef<boolean>(showLandmarks);
+  const facingRef = useRef<CameraFacing>(facing);
+  const activeFacingRef = useRef<CameraFacing | null>(null); // facing the open camera stream was started with
   useEffect(() => {
     settingsRef.current = settings;
     showLandmarksRef.current = showLandmarks;
   }, [settings, showLandmarks]);
   const lastReportedHeatRef = useRef<number>(-1);
+  const lastSizeRef = useRef<string>('');
+  const frameCountRef = useRef<number>(0);
+  const lastHandRef = useRef<HandResults>(null);
+  const lastFaceRef = useRef<FaceResults>(null);
+  const recordingRef = useRef<ActiveRecording | null>(null);
+
+  const animFrameIdRef = useRef<number | null>(null);
+
+  // Two-person mode needs more faces and hands from the trackers
+  useEffect(() => {
+    faceTrackerRef.current.setMaxFaces(settings.twoPlayer ? 2 : 1);
+    handTrackerRef.current.setMaxHands(settings.twoPlayer ? 4 : 2);
+  }, [settings.twoPlayer]);
+
+  // Lighter rendering for phones
+  useEffect(() => {
+    hookah3DSceneRef.current?.setLite(settings.lite);
+  }, [settings.lite]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initAR() {
+      try {
+        // Start downloading the AI models straight away, in parallel with the camera prompt
+        setLoadingStep('Loading AI Vision models (Hand & Face)...');
+        const modelsReady = Promise.all([
+          handTrackerRef.current.initialize(),
+          faceTrackerRef.current.initialize()
+        ]);
+
+        setLoadingStep('Accessing webcam feed...');
+        if (videoRef.current) {
+          activeFacingRef.current = facingRef.current;
+          const success = await webcamServiceRef.current.initialize(videoRef.current, facingRef.current);
+          if (!success) throw new Error('Webcam initialization failed');
+          onCameraStarted();
+        }
+
+        if (!isMounted) return;
+
+        setLoadingStep('Initializing 3D Engine...');
+        if (webglCanvasRef.current) {
+          webglCanvasRef.current.width = window.innerWidth;
+          webglCanvasRef.current.height = window.innerHeight;
+          try {
+            hookah3DSceneRef.current = new Hookah3DScene(webglCanvasRef.current);
+            hookah3DSceneRef.current.setLite(settingsRef.current.lite);
+          } catch (e) {
+            console.warn('3D WebGL scene initialization failed, using 2D high-res fallback:', e);
+          }
+        }
+
+        setLoadingStep('Finishing AI Vision models...');
+        await modelsReady;
+
+        if (!isMounted) return;
+
+        setIsLoading(false);
+        startRenderLoop();
+      } catch (err: any) {
+        console.error('AR initialization error:', err);
+        if (isMounted) {
+          setErrorMsg(err?.message || 'Failed to start AR experience');
+          setIsLoading(false);
+        }
+      }
+    }
+
+    initAR();
+
+    const recordingAtMount = recordingRef;
+
+    return () => {
+      isMounted = false;
+      if (animFrameIdRef.current) {
+        cancelAnimationFrame(animFrameIdRef.current);
+      }
+      const rec = recordingAtMount.current;
+      if (rec) {
+        window.clearInterval(rec.timer);
+        rec.recorder.onstop = null;
+        if (rec.recorder.state !== 'inactive') rec.recorder.stop();
+        recordingAtMount.current = null;
+      }
+      if (hookah3DSceneRef.current) {
+        hookah3DSceneRef.current.destroy();
+      }
+      webcamServiceRef.current.stop();
+    };
+  }, []);
+
+  // Switch between the front and back camera
+  useEffect(() => {
+    facingRef.current = facing;
+    if (activeFacingRef.current === null || activeFacingRef.current === facing) return;
+    const video = videoRef.current;
+    if (!video) return;
+    activeFacingRef.current = facing;
+    lastHandRef.current = null;
+    lastFaceRef.current = null;
+    webcamServiceRef.current
+      .initialize(video, facing)
+      .then(() => onCameraStarted())
+      .catch((err) => {
+        console.error('Camera switch failed:', err);
+        setErrorMsg(err?.message || 'Could not switch camera');
+      });
+  }, [facing]);
 
   // Sound: browsers only start audio after a user gesture, so unlock on the first one
   useEffect(() => {
@@ -87,13 +242,52 @@ export const ARCanvas: React.FC<ARCanvasProps> = ({
     audioRef.current.setEnabled(settings.sound);
   }, [settings.sound]);
 
-  // Screenshot: composite the mirrored camera feed + 3D hookah + 2D overlay into one PNG
-  useEffect(() => {
-    if (screenshotRequest === 0) return;
+  /** Draw camera feed + 3D hookah + 2D overlay into one canvas (screenshots and recordings). */
+  const drawComposite = (ctx: CanvasRenderingContext2D, outW: number, outH: number, pixelRatio: number): boolean => {
     const video = videoRef.current;
     const webgl = webglCanvasRef.current;
     const overlay = overlayCanvasRef.current;
-    if (!video || !webgl || !overlay || !webcamServiceRef.current.isReady()) return;
+    if (!video || !webgl || !overlay || !webcamServiceRef.current.isReady()) return false;
+
+    // Camera feed, mirrored (front camera only) and cropped exactly like the on-screen <video>
+    const vp = getCoverViewport(video, outW, outH);
+    ctx.save();
+    if (facingRef.current === 'user') {
+      ctx.translate(outW, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, vp.offsetX, vp.offsetY, vp.width, vp.height);
+    ctx.restore();
+
+    ctx.drawImage(webgl, 0, 0, outW, outH);
+    ctx.drawImage(overlay, 0, 0, outW, outH);
+
+    // Small credit in the corner
+    ctx.save();
+    ctx.font = `600 ${Math.round(13 * pixelRatio)}px system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+    ctx.shadowBlur = 4 * pixelRatio;
+    ctx.fillText('Hookah Bar AR · @abheepvtt___', outW - 14 * pixelRatio, outH - 14 * pixelRatio);
+    ctx.restore();
+    return true;
+  };
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 4000);
+  };
+
+  const fileStamp = () => new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+
+  // Screenshot
+  useEffect(() => {
+    if (screenshotRequest === 0) return;
 
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     const outW = Math.round(window.innerWidth * ratio);
@@ -102,121 +296,92 @@ export const ARCanvas: React.FC<ARCanvasProps> = ({
     out.width = outW;
     out.height = outH;
     const ctx = out.getContext('2d');
-    if (!ctx) return;
-
-    // Camera feed, mirrored and cropped exactly like the on-screen <video>
-    const vp = getCoverViewport(video, outW, outH);
-    ctx.save();
-    ctx.translate(outW, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, vp.offsetX, vp.offsetY, vp.width, vp.height);
-    ctx.restore();
-
-    ctx.drawImage(webgl, 0, 0, outW, outH);
-    ctx.drawImage(overlay, 0, 0, outW, outH);
-
-    // Small credit in the corner
-    ctx.font = `600 ${Math.round(13 * ratio)}px system-ui, sans-serif`;
-    ctx.textAlign = 'right';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
-    ctx.shadowBlur = 4 * ratio;
-    ctx.fillText('Hookah Bar AR · @abheepvtt___', outW - 14 * ratio, outH - 14 * ratio);
+    if (!ctx || !drawComposite(ctx, outW, outH, ratio)) return;
 
     audioRef.current.playShutter();
     setFlash(true);
     window.setTimeout(() => setFlash(false), 180);
 
     out.toBlob((blob) => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
-      a.href = url;
-      a.download = `hookah-ar-${stamp}.png`;
-      a.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+      if (blob) downloadBlob(blob, `hookah-ar-${fileStamp()}.png`);
     }, 'image/png');
   }, [screenshotRequest]);
 
-  const animFrameIdRef = useRef<number | null>(null);
+  // Video clip recording (toggle)
+  const stopRecording = () => {
+    const rec = recordingRef.current;
+    if (rec && rec.recorder.state !== 'inactive') rec.recorder.stop();
+  };
 
-  useEffect(() => {
-    let isMounted = true;
+  const startRecording = () => {
+    if (recordingRef.current) return;
+    if (typeof MediaRecorder === 'undefined') {
+      console.warn('Video recording is not supported in this browser.');
+      return;
+    }
+    if (!webcamServiceRef.current.isReady()) return;
 
-    async function initAR() {
-      try {
-        setLoadingStep('Accessing webcam feed...');
-        if (videoRef.current) {
-          const success = await webcamServiceRef.current.initialize(videoRef.current);
-          if (!success) throw new Error('Webcam initialization failed');
-        }
+    // Record at a capped size so phones keep up
+    const maxSide = settingsRef.current.lite ? 720 : 1280;
+    const scale = Math.min(1, maxSide / Math.max(window.innerWidth, window.innerHeight));
+    const w = Math.max(2, Math.round((window.innerWidth * scale) / 2) * 2);
+    const h = Math.max(2, Math.round((window.innerHeight * scale) / 2) * 2);
 
-        if (!isMounted) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    drawComposite(ctx, w, h, scale);
 
-        setLoadingStep('Initializing 3D Engine...');
-        if (webglCanvasRef.current) {
-          webglCanvasRef.current.width = window.innerWidth;
-          webglCanvasRef.current.height = window.innerHeight;
-          try {
-            hookah3DSceneRef.current = new Hookah3DScene(webglCanvasRef.current);
-          } catch (e) {
-            console.warn('3D WebGL scene initialization failed, using 2D high-res fallback:', e);
-          }
-        }
+    const stream = canvas.captureStream(30);
+    audioRef.current.getRecordingStream()?.getAudioTracks().forEach((t) => stream.addTrack(t));
 
-        setLoadingStep('Loading AI Vision models (Hand & Face)...');
-        await Promise.all([
-          handTrackerRef.current.initialize(),
-          faceTrackerRef.current.initialize()
-        ]);
-
-        if (!isMounted) return;
-
-        setIsLoading(false);
-        startRenderLoop();
-      } catch (err: any) {
-        console.error('AR initialization error:', err);
-        if (isMounted) {
-          setErrorMsg(err?.message || 'Failed to start AR experience');
-          setIsLoading(false);
-        }
-      }
+    const mimeType = pickRecordingMime();
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(stream, {
+        ...(mimeType ? { mimeType } : {}),
+        videoBitsPerSecond: settingsRef.current.lite ? 2_500_000 : 4_000_000
+      });
+    } catch (e) {
+      console.warn('Could not start recording:', e);
+      return;
     }
 
-    initAR();
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
+    };
 
-    const handleResize = () => {
-      const width = window.innerWidth;
-      const height = window.innerHeight;
+    let seconds = 0;
+    const timer = window.setInterval(() => {
+      seconds += 1;
+      onRecordingChange(true, seconds);
+      if (seconds >= MAX_RECORDING_SECONDS) stopRecording();
+    }, 1000);
 
-      if (webglCanvasRef.current) {
-        webglCanvasRef.current.width = width;
-        webglCanvasRef.current.height = height;
-      }
-      if (overlayCanvasRef.current) {
-        overlayCanvasRef.current.width = width;
-        overlayCanvasRef.current.height = height;
-      }
-      if (hookah3DSceneRef.current) {
-        hookah3DSceneRef.current.resize(width, height);
+    recorder.onstop = () => {
+      window.clearInterval(timer);
+      recordingRef.current = null;
+      onRecordingChange(false, 0);
+      const type = recorder.mimeType || mimeType || 'video/webm';
+      const blob = new Blob(chunks, { type });
+      if (blob.size > 0) {
+        downloadBlob(blob, `hookah-ar-${fileStamp()}.${type.includes('mp4') ? 'mp4' : 'webm'}`);
       }
     };
 
-    window.addEventListener('resize', handleResize);
+    recordingRef.current = { recorder, canvas, ctx, timer };
+    recorder.start(1000);
+    onRecordingChange(true, 0);
+  };
 
-    return () => {
-      isMounted = false;
-      window.removeEventListener('resize', handleResize);
-      if (animFrameIdRef.current) {
-        cancelAnimationFrame(animFrameIdRef.current);
-      }
-      if (hookah3DSceneRef.current) {
-        hookah3DSceneRef.current.destroy();
-      }
-      webcamServiceRef.current.stop();
-    };
-  }, []);
+  useEffect(() => {
+    if (recordRequest === 0) return;
+    if (recordingRef.current) stopRecording();
+    else startRecording();
+  }, [recordRequest]);
 
   // Handle manual smoke trigger from Debug HUD
   useEffect(() => {
@@ -242,47 +407,59 @@ export const ARCanvas: React.FC<ARCanvasProps> = ({
       const width = window.innerWidth;
       const height = window.innerHeight;
 
-      // Ensure canvas pixel dimensions match viewport
-      if (webglCanvas && (webglCanvas.width !== width || webglCanvas.height !== height)) {
-        webglCanvas.width = width;
-        webglCanvas.height = height;
+      // Resize only when the window actually changes (renderer.setSize handles pixel ratio itself)
+      const sizeKey = `${width}x${height}`;
+      if (lastSizeRef.current !== sizeKey) {
+        lastSizeRef.current = sizeKey;
         if (hookah3DSceneRef.current) {
           hookah3DSceneRef.current.resize(width, height);
+        } else if (webglCanvas) {
+          webglCanvas.width = width;
+          webglCanvas.height = height;
         }
-      }
-
-      if (overlayCanvas && (overlayCanvas.width !== width || overlayCanvas.height !== height)) {
-        overlayCanvas.width = width;
-        overlayCanvas.height = height;
+        if (overlayCanvas) {
+          overlayCanvas.width = width;
+          overlayCanvas.height = height;
+        }
       }
 
       if (video && webcamServiceRef.current.isReady()) {
         const timestampMs = performance.now();
+        const s = settingsRef.current;
+        const mirrored = facingRef.current === 'user';
+        frameCountRef.current += 1;
 
-        // 1. Run Computer Vision Landmarkers
-        const handResults = handTrackerRef.current.detect(video, timestampMs);
-        const faceResults = faceTrackerRef.current.detect(video, timestampMs);
+        // 1. Run Computer Vision Landmarkers (lite mode: every other frame, reuse the last result)
+        if (!s.lite || frameCountRef.current % 2 === 0) {
+          lastHandRef.current = handTrackerRef.current.detect(video, timestampMs);
+          lastFaceRef.current = faceTrackerRef.current.detect(video, timestampMs);
+        }
+        const handLandmarks = lastHandRef.current?.landmarks || [];
+        const faceLandmarks = lastFaceRef.current?.faceLandmarks || [];
 
         // The video is cropped to fill the window; map landmarks through the same crop
         const vp = getCoverViewport(video, width, height);
         const vpOffset = { x: vp.offsetX, y: vp.offsetY };
 
         // 2. Process Pinch & Mouth detection
+        const prevPipe = hookahManagerRef.current.getPipePosition();
         const pinchState = gestureDetectorRef.current.detectPinch(
-          handResults?.landmarks || [],
+          handLandmarks,
           vp.width,
           vp.height,
-          true, // Mirrored view matching webcam display
-          vpOffset
+          mirrored,
+          vpOffset,
+          // With two people, the hose goes to whichever grabbing hand is closest to it
+          s.twoPlayer ? { x: prevPipe.x, y: prevPipe.y } : null
         );
 
-        const mouthState = mouthDetectorRef.current.detectMouth(
-          faceResults?.faceLandmarks || [],
-          vp.width,
-          vp.height,
-          true, // Mirrored view matching webcam display
-          vpOffset
-        );
+        const mouths = mouthDetectorRef.current
+          .detectMouths(faceLandmarks, vp.width, vp.height, mirrored, vpOffset)
+          .filter((m): m is MouthState => m !== null);
+        // Active person = the one the hose is closest to (only one person in single-player)
+        const mouthState: MouthState | null = s.twoPlayer
+          ? nearestTo(mouths, { x: prevPipe.x, y: prevPipe.y }, (m) => m.center)
+          : (mouths[0] ?? null);
 
         // Notify parent of metrics
         onMetricsUpdate(pinchState, mouthState);
@@ -297,30 +474,24 @@ export const ARCanvas: React.FC<ARCanvasProps> = ({
 
         onStateChange(appState);
 
-        const s = settingsRef.current;
         const scene3D = hookah3DSceneRef.current;
         const basePos = hookahManagerRef.current.getBasePosition();
         const pipePos = hookahManagerRef.current.getPipePosition();
 
         // 4. Face anchors (eyes, forehead, nostrils) for face-attached effects
-        const faceAnchors = faceAnchorRef.current.detect(
-          faceResults?.faceLandmarks || [],
-          vp.width,
-          vp.height,
-          true,
-          vpOffset
-        );
+        const allFaces = faceAnchorRef.current.detectAll(faceLandmarks, vp.width, vp.height, mirrored, vpOffset);
+        const activeFace = mouthState ? nearestTo(allFaces, mouthState.center, (f) => f.center) : null;
 
         // 5. Charcoal: the free hand fans (open palm) or refreshes (pinch) the coal
         const coalPos = scene3D ? scene3D.getCoalScreenPosition() : { x: basePos.x, y: basePos.y - 280 };
         const coal = coalManagerRef.current.update(
-          handResults?.landmarks || [],
+          handLandmarks,
           pipePos.isHeld,
           pinchState ? pinchState.pinchCenter : null,
           coalPos,
           vp,
           height,
-          true
+          mirrored
         );
         scene3D?.setCoalHeat(coal.heat);
         audioRef.current.update(appState, coal.heat, coal.fanning, coal.freshCoal);
@@ -342,17 +513,18 @@ export const ARCanvas: React.FC<ARCanvasProps> = ({
           style: s.smokeStyle,
           color: s.smokeColor,
           density: s.smokeDensity * (0.75 + 0.55 * coal.heat),
-          slowMotion: s.slowMotion
+          slowMotion: s.slowMotion,
+          lite: s.lite
         });
 
         if (shouldEmitVapour) {
           const faceW = mouthState ? mouthState.width * 3.5 : 160;
           const sources: SmokeSource[] = [];
-          if (s.exhaleSource !== 'nose' || !faceAnchors) {
+          if (s.exhaleSource !== 'nose' || !activeFace) {
             sources.push({ x: vapourEmitterPos.x, y: vapourEmitterPos.y });
           }
-          if (faceAnchors && s.exhaleSource !== 'mouth') {
-            sources.push({ ...faceAnchors.noseLeft, scale: 0.5 }, { ...faceAnchors.noseRight, scale: 0.5 });
+          if (activeFace && s.exhaleSource !== 'mouth') {
+            sources.push({ ...activeFace.noseLeft, scale: 0.5 }, { ...activeFace.noseRight, scale: 0.5 });
           }
           particleSystemRef.current.emit(sources, faceW);
         }
@@ -365,7 +537,7 @@ export const ARCanvas: React.FC<ARCanvasProps> = ({
           scene3D.update(basePos, pipePos, appState, timestampMs);
         }
 
-        // 6. RENDER 2D OVERLAY (Particles, Backup Hookah, Debug Landmarks)
+        // 8. RENDER 2D OVERLAY (Particles, Backup Hookah, Debug Landmarks)
         if (overlayCanvas) {
           const ctx = overlayCanvas.getContext('2d');
           if (ctx) {
@@ -379,8 +551,10 @@ export const ARCanvas: React.FC<ARCanvasProps> = ({
               drawHoseAndMouthpiece(ctx, basePos, pipePos, appState);
             }
 
-            // Face-attached accessory (glasses, crown, ...)
-            drawFaceEffect(ctx, s.faceEffect, faceAnchors, timestampMs);
+            // Face-attached accessory (glasses, crown, ...) on every detected face
+            for (const face of allFaces) {
+              drawFaceEffect(ctx, s.faceEffect, face, timestampMs);
+            }
 
             // Coal interaction zone + sparks
             if (coal.active) {
@@ -397,6 +571,10 @@ export const ARCanvas: React.FC<ARCanvasProps> = ({
             }
           }
         }
+
+        // 9. Feed the video recorder, if a clip is being recorded
+        const rec = recordingRef.current;
+        if (rec) drawComposite(rec.ctx, rec.canvas.width, rec.canvas.height, rec.canvas.width / width);
       }
 
       animFrameIdRef.current = requestAnimationFrame(loop);
@@ -419,7 +597,8 @@ export const ARCanvas: React.FC<ARCanvasProps> = ({
           width: '100%',
           height: '100%',
           objectFit: 'cover',
-          transform: 'scaleX(-1)' // Mirror video feed naturally for selfie experience
+          // Mirror the front camera like a selfie; the back camera is shown as-is
+          transform: facing === 'user' ? 'scaleX(-1)' : 'none'
         }}
       />
 

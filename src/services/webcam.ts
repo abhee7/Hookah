@@ -2,19 +2,22 @@ export class WebcamService {
   private videoElement: HTMLVideoElement | null = null;
   private stream: MediaStream | null = null;
 
-  async initialize(videoElement: HTMLVideoElement): Promise<boolean> {
+  async initialize(videoElement: HTMLVideoElement, facing: 'user' | 'environment' = 'user'): Promise<boolean> {
     this.videoElement = videoElement;
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error('Webcam API is not supported in this browser environment.');
     }
 
+    // Release any previous camera before opening the other one
+    this.stop();
+
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1280 },
           height: { ideal: 720 },
-          facingMode: 'user'
+          facingMode: { ideal: facing }
         },
         audio: false
       });

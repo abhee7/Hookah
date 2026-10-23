@@ -1,11 +1,14 @@
 import type { MouthState, Point2D } from '../types/hookah';
 
+type Landmark = { x: number; y: number; z?: number };
+
 export class MouthDetector {
   // Lowered threshold (0.15) for immediate, responsive mouth open detection
   private mouthOpenThreshold = 0.15;
 
+  /** Mouth of the first detected face. */
   detectMouth(
-    faceLandmarksList: Array<Array<{ x: number; y: number; z?: number }>>,
+    faceLandmarksList: Landmark[][],
     canvasWidth: number,
     canvasHeight: number,
     isMirrored: boolean = true,
@@ -14,8 +17,29 @@ export class MouthDetector {
     if (!faceLandmarksList || faceLandmarksList.length === 0) {
       return null;
     }
+    return this.computeMouth(faceLandmarksList[0], canvasWidth, canvasHeight, isMirrored, offset);
+  }
 
-    const landmarks = faceLandmarksList[0];
+  /** One entry per detected face (null where a face has no usable mouth landmarks). */
+  detectMouths(
+    faceLandmarksList: Landmark[][],
+    canvasWidth: number,
+    canvasHeight: number,
+    isMirrored: boolean = true,
+    offset: Point2D = { x: 0, y: 0 }
+  ): Array<MouthState | null> {
+    return (faceLandmarksList || []).map((lm) =>
+      this.computeMouth(lm, canvasWidth, canvasHeight, isMirrored, offset)
+    );
+  }
+
+  private computeMouth(
+    landmarks: Landmark[] | undefined,
+    canvasWidth: number,
+    canvasHeight: number,
+    isMirrored: boolean,
+    offset: Point2D
+  ): MouthState | null {
     if (!landmarks || landmarks.length < 300) return null;
 
     // Landmark indices for mouth

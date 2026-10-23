@@ -9,6 +9,7 @@ export class AudioEngine {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private noise: AudioBuffer | null = null;
+  private recordDest: MediaStreamAudioDestinationNode | null = null;
 
   private enabled = true;
   private prevState: AppState = 'IDLE';
@@ -44,11 +45,25 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Audio of everything this engine plays, for video recording. Returns null if audio
+   * hasn't been unlocked yet (the clip is then recorded without sound).
+   */
+  getRecordingStream(): MediaStream | null {
+    if (!this.ctx || !this.master) return null;
+    if (!this.recordDest) {
+      this.recordDest = this.ctx.createMediaStreamDestination();
+      this.master.connect(this.recordDest);
+    }
+    return this.recordDest.stream;
+  }
+
   destroy() {
     void this.ctx?.close();
     this.ctx = null;
     this.master = null;
     this.noise = null;
+    this.recordDest = null;
   }
 
   /** Call once per frame with the current interaction state. */
