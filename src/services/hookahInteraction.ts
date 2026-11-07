@@ -14,14 +14,9 @@ export class HookahInteractionManager {
   private vapourStartTime: number | null = null;
   private sipCompleted: boolean = false;
 
-  // Left-side anchor for the hookah: a fixed minimum on desktop, a fraction of the width on phones
-  private static baseX(canvasWidth: number): number {
-    return canvasWidth < 700 ? canvasWidth * 0.26 : Math.max(180, canvasWidth * 0.2);
-  }
-
   constructor(defaultWidth: number = 1280, defaultHeight: number = 720) {
     this.baseRestPos = {
-      x: HookahInteractionManager.baseX(defaultWidth),
+      x: Math.max(180, defaultWidth * 0.2),
       y: defaultHeight * 0.72
     };
     this.pipeState = {
@@ -38,7 +33,7 @@ export class HookahInteractionManager {
   updateBasePosition(canvasWidth: number, canvasHeight: number) {
     // Position hookah base nicely in bottom left region
     this.baseRestPos = {
-      x: HookahInteractionManager.baseX(canvasWidth),
+      x: Math.max(180, canvasWidth * 0.2),
       y: canvasHeight * 0.72
     };
 

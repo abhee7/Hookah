@@ -3,13 +3,6 @@ import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 export class HandTrackerService {
   private handLandmarker: HandLandmarker | null = null;
   private isInitializing = false;
-  private maxHands = 2;
-
-  /** Track more hands (two-person mode). Safe to call before or after initialize(). */
-  setMaxHands(count: number) {
-    this.maxHands = count;
-    void this.handLandmarker?.setOptions({ numHands: count });
-  }
 
   async initialize(): Promise<void> {
     if (this.handLandmarker || this.isInitializing) return;
@@ -27,7 +20,7 @@ export class HandTrackerService {
           delegate: 'GPU'
         },
         runningMode: 'VIDEO',
-        numHands: this.maxHands
+        numHands: 2
       });
       console.log('HandLandmarker initialized successfully');
     } catch (err) {
@@ -44,7 +37,7 @@ export class HandTrackerService {
             delegate: 'CPU'
           },
           runningMode: 'VIDEO',
-          numHands: this.maxHands
+          numHands: 2
         });
       } catch (fallbackErr) {
         console.error('HandLandmarker CPU fallback failed:', fallbackErr);
